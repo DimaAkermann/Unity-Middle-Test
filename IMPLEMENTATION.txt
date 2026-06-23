@@ -1,0 +1,58 @@
+1) Coding principles
+- Разделение: gameplay отдаёт состояние/события, UI только отображает. UI не делает поиск объектов в апдейте.
+- Производительность: без GetComponent/Find в циклах, без форматирования строк и логов каждый кадр. UI обновляется по интервалу или по изменению данных.
+
+2) Save/Load utility
+Файл: Assets/Scripts/TestTask/Infrastructure/SaveLoad/SaveUtility.cs
+- SaveUtility:
+  - TrySave<T>(key, data): сохраняет любой сериализуемый класс в файл.
+  - TryLoad<T>(key, out data): безопасно загружает, при ошибке возвращает false.
+  - Запись атомарная: сначала .tmp, потом replace/move.
+  - Путь: Application.persistentDataPath/saves/<key>.json
+
+3) Popup system
+Папка: Assets/Scripts/TestTask/UI/Popups
+- PopupRequest/PopupButton: данные (title/body/кнопки + callback).
+- PopupView: принимает request, ставит тексты, пересоздаёт 1–5 кнопок, вешает callback, скрывается после клика.
+- PopupService (MonoBehaviour): единая точка вызова Show/Hide, поднимает PopupView через Resources/UI/PopupView.
+
+4) Refactoring (UI)
+Файлы: Assets/Scripts/TestTask/UI/Characters/CharactersView.cs, Character.cs
+- Исправлено:
+  - корректное среднее: total/count
+  - нет FixedUpdate для UI, обновление раз в N кадров (_updateEveryNFrames)
+  - кэш TMP_Text, нет GetComponent каждый тик
+  - меньше аллокаций: StringBuilder + TMP_Text.SetText(StringBuilder)
+- Данные:
+  - список Transform в инспекторе
+  - кэш Character компонентов из этих Transform
+
+Пункт 4 (подробнее)
+Что было не так в исходнике из тестового:
+- [SerializedField] опечатка, поле не сериализуется и список не задаётся в инспекторе.
+- List<Transform> использовался как массив: .Length вместо .Count.
+- GetComponents<Character>() возвращает массив, но код ожидал один компонент (и проверял на null как одиночный объект).
+- Среднее считалось неверно: деление _characters.Length / totalValue (перепутаны местами), плюс риск деления на 0.
+- FixedUpdate() для UI: обновлялось по физике и слишком часто.
+- Внутри цикла делались дорогие вызовы и мусор:
+  - GetComponent<Text>() каждый тик
+  - string.Format каждый тик (аллокации)
+  - Debug.Log каждый тик (шум + нагрузка)
+
+Что сделано в текущей версии:
+- Перешёл на Update раз в N кадров: `_updateEveryNFrames` (выполняет требование “once every X frames”).
+- `TMP_Text` кэшируется один раз, UI не ищет компонент каждый апдейт.
+- `Transform` список используется корректно, а `Character` компоненты кэшируются в `_cache`.
+- При обновлении считаются только активные `Character` (`isActiveAndEnabled`).
+- Среднее считается как `total / activeCount`, при `activeCount == 0` выводится 0.
+- Строка собирается через `StringBuilder` и отдаётся в `TMP_Text.SetText`, чтобы уменьшить аллокации.
+
+5) Gameplay entity tracking
+Папка: Assets/Scripts/TestTask/Gameplay/EntityRegistry
+- GameplayEntityRegistryHost: хранит экземпляр Registry.
+- GameplayEntityRegistry:
+  - Register/Unregister(GameObject)
+  - GetActive(List<GameObject>): возвращает только non-null и activeInHierarchy.
+- GameplayEntity:
+  - на Awake ищет host (если не задан)
+  - на OnEnable/OnDisable/OnDestroy регистрирует/дерегистрирует объект
